@@ -1,146 +1,99 @@
-// src/tools/calculator_eval.cpp — YOU IMPLEMENT (spec §4.6).
+// src/tools/calculator_eval.cpp — P3 instructor reference (used only with -DUSE_P3_REFERENCE=ON).
 //
-// calc_evaluate: evaluate a well-formed token list with two stacks
-// (one for numbers, one for operators and '('). See spec §4.6 and the
-// worked trace in Appendix C. std::stack or std::vector are both fine.
+// Two-stack evaluation (Dijkstra):
+//   values : numbers waiting to be combined
+//   ops    : operators and '(' waiting to be applied
+// For each token:
+//   number  -> push on values
+//   '('     -> push on ops
+//   ')'     -> apply ops until the matching '(' is on top; pop it
+//   op      -> while the top of ops is an operator with precedence >= op
+//              (that is what makes equal precedence left-to-right), apply it;
+//              then push op
+// At the end apply everything left on ops. The answer is the single value.
 
 #include "tools/calculator.h"
+
 #include <stack>
 
 namespace {
 
-// Helper to determine operator precedence per spec §4.6
-// * and / have precedence 2; + and - have precedence 1; '(' has 0
-int getPrecedence(CalcToken::Kind opKind) {
-    if (opKind == CalcToken::Kind::Times || opKind == CalcToken::Kind::Divide) {
-        return 2;
-    }
-    if (opKind == CalcToken::Kind::Plus || opKind == CalcToken::Kind::Minus) {
-        return 1;
-    }
-    return 0;
+using Kind = CalcToken::Kind;
+
+int precedence(Kind k) {
+    return (k == Kind::Times || k == Kind::Divide) ? 2 : 1;   // only called on operators
 }
 
-// Executes a single binary operator application on the value stack
-bool applyOperator(CalcToken::Kind op, std::stack<double>& valStack, std::string* err) {
-    // Need at least two numbers to apply a binary operator
-    if (valStack.size() < 2) {
-        if (err != nullptr) {
-            *err = "malformed expression: not enough operands";
-        }
+bool is_operator(Kind k) {
+    return k == Kind::Plus || k == Kind::Minus || k == Kind::Times || k == Kind::Divide;
+}
+
+// Pops one operator and two values, pushes the result.
+bool apply_top(std::stack<double>& values, std::stack<Kind>& ops, std::string* error) {
+    if (ops.empty() || values.size() < 2) {
+        *error = "malformed expression";
         return false;
     }
+    Kind op = ops.top();
+    ops.pop();
+    double right = values.top();
+    values.pop();
+    double left = values.top();
+    values.pop();
 
-    // Crucial order check: the first popped element is the right-hand operand!
-    double rightOperand = valStack.top();
-    valStack.pop();
-
-    double leftOperand = valStack.top();
-    valStack.pop();
-
-    double opResult = 0.0;
-    if (op == CalcToken::Kind::Plus) {
-        opResult = leftOperand + rightOperand;
-    } else if (op == CalcToken::Kind::Minus) {
-        opResult = leftOperand - rightOperand;
-    } else if (op == CalcToken::Kind::Times) {
-        opResult = leftOperand * rightOperand;
-    } else if (op == CalcToken::Kind::Divide) {
-        if (rightOperand == 0.0) {
-            // Exact requirement from spec §4.6: "division by zero"
-            if (err != nullptr) {
-                *err = "division by zero";
+    double result = 0.0;
+    switch (op) {
+        case Kind::Plus:   result = left + right; break;
+        case Kind::Minus:  result = left - right; break;
+        case Kind::Times:  result = left * right; break;
+        case Kind::Divide:
+            if (right == 0.0) {
+                *error = "division by zero";
+                return false;
             }
+            result = left / right;
+            break;
+        default:
+            *error = "malformed expression";
             return false;
-        }
-        opResult = leftOperand / rightOperand;
-    } else {
-        if (err != nullptr) {
-            *err = "unknown operator token";
-        }
-        return false;
     }
-
-    valStack.push(opResult);
+    values.push(result);
     return true;
 }
 
-} // namespace
+}  // namespace
 
-bool calc_evaluate(const std::vector<CalcToken>& tokens, double* out,
-                   std::string* error) {
-    if (tokens.empty()) {
-        if (error != nullptr) {
-            *error = "empty token list";
-        }
-        return false;
-    }
+bool calc_evaluate(const std::vector<CalcToken>& tokens, double* out, std::string* error) {
+    std::stack<double> values;
+    std::stack<Kind>   ops;
 
-    std::stack<double> valStack;
-    std::stack<CalcToken::Kind> opStack;
-
-    // Iterate through tokens left to right
-    for (const auto& token : tokens) {
-        if (token.kind == CalcToken::Kind::Number) {
-            valStack.push(token.value);
-        } else if (token.kind == CalcToken::Kind::LParen) {
-            opStack.push(token.kind);
-        } else if (token.kind == CalcToken::Kind::RParen) {
-            // Apply operators until matching '(' is reached
-            while (!opStack.empty() && opStack.top() != CalcToken::Kind::LParen) {
-                CalcToken::Kind topOp = opStack.top();
-                opStack.pop();
-                if (!applyOperator(topOp, valStack, error)) {
-                    return false;
-                }
-            }
-            if (opStack.empty()) {
-                if (error != nullptr) {
-                    *error = "mismatched parentheses";
-                }
+    for (const CalcToken& t : tokens) {
+        if (t.kind == Kind::Number) {
+            values.push(t.value);
+        } else if (t.kind == Kind::LParen) {
+            ops.push(Kind::LParen);
+        } else if (t.kind == Kind::RParen) {
+            while (!ops.empty() && ops.top() != Kind::LParen)
+                if (!apply_top(values, ops, error)) return false;
+            if (ops.empty()) {
+                *error = "malformed expression";
                 return false;
             }
-            // Pop the matching '('
-            opStack.pop();
-        } else {
-            // Standard binary operators (+, -, *, /)
-            // While top of opStack is an operator whose precedence is >= this token's precedence, apply it
-            while (!opStack.empty() && opStack.top() != CalcToken::Kind::LParen &&
-                   getPrecedence(opStack.top()) >= getPrecedence(token.kind)) {
-                CalcToken::Kind topOp = opStack.top();
-                opStack.pop();
-                if (!applyOperator(topOp, valStack, error)) {
-                    return false;
-                }
-            }
-            opStack.push(token.kind);
+            ops.pop();   // the '('
+        } else {         // + - * /
+            while (!ops.empty() && is_operator(ops.top()) &&
+                   precedence(ops.top()) >= precedence(t.kind))
+                if (!apply_top(values, ops, error)) return false;
+            ops.push(t.kind);
         }
     }
+    while (!ops.empty())
+        if (!apply_top(values, ops, error)) return false;
 
-    // Process remaining operators
-    while (!opStack.empty()) {
-        CalcToken::Kind remainingOp = opStack.top();
-        opStack.pop();
-        if (remainingOp == CalcToken::Kind::LParen) {
-            if (error != nullptr) {
-                *error = "unclosed parenthesis";
-            }
-            return false;
-        }
-        if (!applyOperator(remainingOp, valStack, error)) {
-            return false;
-        }
-    }
-
-    if (valStack.size() != 1) {
-        if (error != nullptr) {
-            *error = "invalid final stack state";
-        }
+    if (values.size() != 1) {
+        *error = "malformed expression";
         return false;
     }
-
-    if (out != nullptr) {
-        *out = valStack.top();
-    }
+    *out = values.top();
     return true;
 }

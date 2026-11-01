@@ -66,14 +66,16 @@ public:
     static std::size_t hash(std::string_view key) noexcept;
 
 private:
-    // ===== REPRESENTATION =====
-    // Separate chaining: each bucket holds a vector of owned Tool unique_ptrs.
-    // Storing unique_ptr keeps the Tool objects in place on the heap during rehash,
-    // which guarantees pointer stability for Tool* returned by find().
-    std::vector<std::vector<std::unique_ptr<Tool>>> buckets_;
-    std::size_t toolCount_ = 0;
+    // ===== YOUR REPRESENTATION GOES HERE =====
+    // Reference choice: separate chaining, singly linked nodes, FNV-1a,
+    // power-of-two bucket count, resize to 2x when load factor would pass 0.75.
+    struct Node {
+        std::unique_ptr<Tool> tool;
+        std::unique_ptr<Node> next;
+    };
 
-    // Resizing threshold: keep load factor <= 0.75 so chains stay short (typically <= 6).
-    // Doubling buckets maintains power-of-two capacity for fast bitwise masking.
-    void rehash(std::size_t newCapacity);
+    void rehash(std::size_t new_bucket_count);
+
+    std::vector<std::unique_ptr<Node>> buckets_;
+    std::size_t                        count_ = 0;
 };
